@@ -1,0 +1,855 @@
+{%- comment -%}
+  Algolia Predictive Search – Two-Column Overlay
+  ================================================
+  This snippet augments Dawn's native predictive search with Algolia Query
+  Suggestions. When enabled via Theme Customizer, it creates a two-column
+  layout inside Dawn's existing search dropdown:
+    - LEFT column: Algolia Query Suggestions (with highlighted matches)
+    - RIGHT column: Shopify's native product results (scraped from Dawn's DOM)
+
+  Requirements:
+    - settings.enable_algolia_suggestions must be true
+    - Algolia CDN script (algoliasearch-lite) must be loaded in theme.liquid
+    - Valid Algolia credentials in Theme Customizer settings
+
+  This snippet does NOT modify or remove Dawn's predictive-search.liquid.
+  It layers on top of Dawn's existing behavior using MutationObserver.
+{%- endcomment -%}
+
+{%- unless settings.enable_algolia_suggestions -%}
+  {%- break -%}
+{%- endunless -%}
+
+<style>
+  /* ================================================================== */
+  /*  Algolia Predictive Search – Two-Column Layout                     */
+  /* ================================================================== */
+
+  .algolia-ps-wrapper {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0;
+    width: 100%;
+    min-height: 120px;
+  }
+
+  .algolia-ps-col {
+    padding: 0;
+    overflow-y: auto;
+    max-height: 60vh;
+  }
+
+  .algolia-ps-col--suggestions {
+    border-right: 1px solid rgba(var(--color-foreground, 18, 18, 18), 0.08);
+  }
+
+  .algolia-ps-col--products {
+    /* Shopify products column */
+  }
+
+  .algolia-ps-header {
+    font-size: 1rem;
+    font-weight: 600;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: rgba(var(--color-foreground, 18, 18, 18), 0.55);
+    padding: 1.2rem 2rem 0.6rem;
+    margin: 0;
+    border-bottom: 1px solid rgba(var(--color-foreground, 18, 18, 18), 0.06);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.6rem;
+  }
+
+  /* ================================================================== */
+  /*  Source Indicator Badges                                            */
+  /* ================================================================== */
+
+  .algolia-ps-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.9rem;
+    font-weight: 500;
+    letter-spacing: 0.04em;
+    text-transform: none;
+    padding: 0.2rem 0.6rem;
+    border-radius: 3px;
+    line-height: 1.4;
+    flex-shrink: 0;
+    white-space: nowrap;
+  }
+
+  .algolia-ps-badge--algolia {
+    background-color: #003dff;
+    color: #ffffff;
+  }
+
+  .algolia-ps-badge--shopify {
+    background-color: #008060;
+    color: #ffffff;
+  }
+
+  .algolia-ps-badge__icon {
+    width: 1.2rem;
+    height: 1.2rem;
+    flex-shrink: 0;
+  }
+
+  .algolia-ps-badge__icon svg {
+    width: 100%;
+    height: 100%;
+    display: block;
+  }
+
+  /* Powered-by footer link */
+  .algolia-ps-powered-by {
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 0.4rem;
+    padding: 0.6rem 2rem 0.8rem;
+    font-size: 1rem;
+    color: rgba(var(--color-foreground, 18, 18, 18), 0.35);
+    text-decoration: none;
+    transition: color 0.15s ease;
+    border-top: 1px solid rgba(var(--color-foreground, 18, 18, 18), 0.04);
+  }
+
+  .algolia-ps-powered-by:hover {
+    color: rgba(var(--color-foreground, 18, 18, 18), 0.55);
+  }
+
+  .algolia-ps-powered-by svg {
+    width: 1.2rem;
+    height: 1.2rem;
+    flex-shrink: 0;
+  }
+
+  .algolia-ps-suggestions-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+
+  .algolia-ps-suggestion {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    padding: 0.9rem 2rem;
+    cursor: pointer;
+    font-size: 1.4rem;
+    line-height: 1.5;
+    color: rgba(var(--color-foreground, 18, 18, 18), 0.85);
+    transition: background-color 0.15s ease;
+    text-decoration: none;
+    border: none;
+    background: none;
+    width: 100%;
+    text-align: left;
+  }
+
+  .algolia-ps-suggestion:hover,
+  .algolia-ps-suggestion:focus {
+    background-color: rgba(var(--color-foreground, 18, 18, 18), 0.04);
+    outline: none;
+  }
+
+  .algolia-ps-suggestion:focus-visible {
+    outline: 2px solid rgba(var(--color-foreground, 18, 18, 18), 0.4);
+    outline-offset: -2px;
+  }
+
+  .algolia-ps-suggestion__icon {
+    flex-shrink: 0;
+    width: 1.6rem;
+    height: 1.6rem;
+    opacity: 0.4;
+  }
+
+  .algolia-ps-suggestion__text {
+    flex: 1;
+  }
+
+  .algolia-ps-suggestion__text mark {
+    background: none;
+    font-weight: 700;
+    color: rgba(var(--color-foreground, 18, 18, 18), 1);
+  }
+
+  .algolia-ps-product {
+    display: grid;
+    grid-template-columns: 5rem 1fr;
+    gap: 1.2rem;
+    padding: 0.8rem 2rem;
+    text-decoration: none;
+    color: rgba(var(--color-foreground, 18, 18, 18), 0.85);
+    transition: background-color 0.15s ease;
+    align-items: center;
+  }
+
+  .algolia-ps-product:hover {
+    background-color: rgba(var(--color-foreground, 18, 18, 18), 0.04);
+  }
+
+  .algolia-ps-product__image {
+    width: 5rem;
+    height: 5rem;
+    object-fit: contain;
+    border-radius: 2px;
+  }
+
+  .algolia-ps-product__title {
+    font-size: 1.4rem;
+    font-weight: 500;
+    line-height: 1.4;
+    margin: 0;
+  }
+
+  .algolia-ps-empty {
+    padding: 1.5rem 2rem;
+    font-size: 1.3rem;
+    color: rgba(var(--color-foreground, 18, 18, 18), 0.45);
+    font-style: italic;
+  }
+
+  .algolia-ps-products-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+
+  /* Mobile: stack columns vertically */
+  @media screen and (max-width: 749px) {
+    .algolia-ps-wrapper {
+      grid-template-columns: 1fr;
+    }
+
+    .algolia-ps-col--suggestions {
+      border-right: none;
+      border-bottom: 1px solid rgba(var(--color-foreground, 18, 18, 18), 0.08);
+    }
+
+    .algolia-ps-col {
+      max-height: 40vh;
+    }
+  }
+</style>
+
+<script>
+  (function AlgoliaPredictiveSearchInit() {
+    'use strict';
+
+    /* ================================================================ */
+    /*  Configuration from Theme Customizer settings                    */
+    /* ================================================================ */
+    var CONFIG = {
+      appId: {{ settings.algolia_app_id | json }},
+      searchKey: {{ settings.algolia_search_api_key | json }},
+      suggestionsIndex: {{ settings.algolia_suggestions_index | json }},
+      maxSuggestions: 6,
+      debounceMs: 220,
+      minQueryLength: 1
+    };
+
+    /* ================================================================ */
+    /*  Validate credentials                                           */
+    /* ================================================================ */
+    if (!CONFIG.appId || !CONFIG.searchKey || !CONFIG.suggestionsIndex) {
+      console.warn('[Algolia PS] Missing Algolia credentials in Theme Customizer settings. Algolia suggestions disabled.');
+      return;
+    }
+
+    console.log('[Algolia PS] Initializing with App ID:', CONFIG.appId, 'Index:', CONFIG.suggestionsIndex);
+
+    /* ================================================================ */
+    /*  Constants                                                       */
+    /* ================================================================ */
+    var GUARD_ATTR = 'data-algolia-ps-attached';
+    var WRAPPER_CLASS = 'algolia-ps-wrapper';
+
+    var SEARCH_ICON_SVG =
+      '<svg class="algolia-ps-suggestion__icon" xmlns="http://www.w3.org/2000/svg" ' +
+      'viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" ' +
+      'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+      '<circle cx="11" cy="11" r="8"></circle>' +
+      '<line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>';
+
+    /* Algolia logo SVG (small mark icon) */
+    var ALGOLIA_LOGO_SVG =
+      '<svg class="algolia-ps-badge__icon" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">' +
+      '<path fill="currentColor" d="M12 0C5.373 0 0 5.373 0 12s5.373 12 12 12 12-5.373 12-12S18.627 0 12 0zm4.14 16.47l-1.18-.68a.45.45 0 0 0-.22-.06.44.44 0 0 0-.44.44v1.36a.44.44 0 0 1-.26.4 5.59 5.59 0 0 1-2.04.39c-3.08 0-5.58-2.5-5.58-5.58s2.5-5.58 5.58-5.58c1.04 0 2.04.29 2.91.84a.44.44 0 0 0 .6-.15l.68-1.18a.44.44 0 0 0-.15-.6A7.43 7.43 0 0 0 12 4.87a7.87 7.87 0 1 0 7.87 7.87v-.44a.44.44 0 0 0-.22-.38l-1.18-.68a.44.44 0 0 0-.6.15.44.44 0 0 0-.06.22v1.12a5.56 5.56 0 0 1-1.67 3.74z"/></svg>';
+
+    /* Shopify bag icon SVG */
+    var SHOPIFY_LOGO_SVG =
+      '<svg class="algolia-ps-badge__icon" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">' +
+      '<path fill="currentColor" d="M15.34 3.27a.75.75 0 0 0-.67-.42h-.01a.75.75 0 0 0-.67.42L12 7.5 9.99 3.27a.75.75 0 0 0-.67-.42h-.01a.75.75 0 0 0-.67.42L6 9H3.75a.75.75 0 0 0-.75.75v10.5c0 .414.336.75.75.75h16.5a.75.75 0 0 0 .75-.75V9.75a.75.75 0 0 0-.75-.75H18l-2.66-5.73zM12 5.85l1.34 2.9h-2.68L12 5.85zM9.31 4.85L7.66 8.4H5.25l2.06-4.43 2 .88zM14.69 4.85l2 -.88 2.06 4.43h-2.41l-1.65-3.55z"/></svg>';
+
+    /* ================================================================ */
+    /*  Algolia client (lazy-initialized)                               */
+    /* ================================================================ */
+    var algoliaClient = null;
+    var suggestionsIdx = null;
+
+    function getAlgoliaIndex() {
+      if (suggestionsIdx) return suggestionsIdx;
+      if (typeof algoliasearch === 'undefined') {
+        console.warn('[Algolia PS] algoliasearch global not found — CDN may not have loaded yet.');
+        return null;
+      }
+      try {
+        algoliaClient = algoliasearch(CONFIG.appId, CONFIG.searchKey);
+        suggestionsIdx = algoliaClient.initIndex(CONFIG.suggestionsIndex);
+        console.log('[Algolia PS] Algolia client initialized successfully.');
+        return suggestionsIdx;
+      } catch (err) {
+        console.error('[Algolia PS] Failed to initialize Algolia client:', err);
+        return null;
+      }
+    }
+
+    /* ================================================================ */
+    /*  Utility: debounce                                               */
+    /* ================================================================ */
+    function debounce(fn, delay) {
+      var timer = null;
+      return function () {
+        var context = this;
+        var args = arguments;
+        clearTimeout(timer);
+        timer = setTimeout(function () {
+          fn.apply(context, args);
+        }, delay);
+      };
+    }
+
+    /* ================================================================ */
+    /*  Utility: escape HTML to prevent XSS                            */
+    /* ================================================================ */
+    function escapeHtml(str) {
+      if (!str) return '';
+      var div = document.createElement('div');
+      div.appendChild(document.createTextNode(str));
+      return div.innerHTML;
+    }
+
+    /* ================================================================ */
+    /*  Highlight matched text in suggestion                           */
+    /* ================================================================ */
+    function getHighlightedText(hit) {
+      if (hit._highlightResult && hit._highlightResult.query && hit._highlightResult.query.value) {
+        return hit._highlightResult.query.value;
+      }
+      return escapeHtml(hit.query || hit.objectID || '');
+    }
+
+    /* ================================================================ */
+    /*  Fetch Algolia suggestions                                      */
+    /* ================================================================ */
+    function fetchSuggestions(query, callback) {
+      var idx = getAlgoliaIndex();
+      if (!idx) {
+        console.warn('[Algolia PS] No index available, returning empty suggestions.');
+        callback([]);
+        return;
+      }
+
+      console.log('[Algolia PS] Fetching suggestions for query:', query);
+
+      idx.search(query, {
+        hitsPerPage: CONFIG.maxSuggestions,
+        highlightPreTag: '<mark>',
+        highlightPostTag: '</mark>'
+      }).then(function (res) {
+        console.log('[Algolia PS] Got', (res.hits || []).length, 'suggestions from Algolia.');
+        callback(res.hits || []);
+      }).catch(function (err) {
+        console.error('[Algolia PS] Search error:', err);
+        callback([]);
+      });
+    }
+
+    /* ================================================================ */
+    /*  Scrape Shopify product results from Dawn's DOM                 */
+    /* ================================================================ */
+    function scrapeShopifyProducts(psElement) {
+      var products = [];
+      var productItems = psElement.querySelectorAll('#predictive-search-results-products-list li');
+
+      productItems.forEach(function (li) {
+        var link = li.querySelector('a');
+        var img = li.querySelector('img');
+        var title = li.querySelector('.predictive-search__item-heading');
+
+        if (link) {
+          products.push({
+            url: link.getAttribute('href') || '#',
+            imageUrl: img ? img.getAttribute('src') : '',
+            imageAlt: img ? (img.getAttribute('alt') || '') : '',
+            title: title ? title.textContent.trim() : 'Product'
+          });
+        }
+      });
+
+      return products;
+    }
+
+    /* ================================================================ */
+    /*  Scrape Shopify suggestion results from Dawn's DOM              */
+    /* ================================================================ */
+    function scrapeShopifySuggestions(psElement) {
+      var suggestions = [];
+      var queryItems = psElement.querySelectorAll('#predictive-search-results-queries-list li');
+      queryItems.forEach(function (li) {
+        var link = li.querySelector('a');
+        var heading = li.querySelector('.predictive-search__item-heading');
+        if (link && heading) {
+          suggestions.push({
+            url: link.getAttribute('href') || '#',
+            text: heading.textContent.trim(),
+            html: heading.innerHTML
+          });
+        }
+      });
+
+      var collectionItems = psElement.querySelectorAll('#predictive-search-results-queries-list li');
+      /* Collections are also in the queries list in Dawn */
+
+      return suggestions;
+    }
+
+    /* ================================================================ */
+    /*  Scrape Shopify pages results from Dawn's DOM                   */
+    /* ================================================================ */
+    function scrapeShopifyPages(psElement) {
+      var pages = [];
+      /* Try both desktop and mobile page lists */
+      var pageItems = psElement.querySelectorAll('[id^="predictive-search-results-pages-list"] li');
+      pageItems.forEach(function (li) {
+        var link = li.querySelector('a');
+        var heading = li.querySelector('.predictive-search__item-heading');
+        if (link && heading) {
+          pages.push({
+            url: link.getAttribute('href') || '#',
+            title: heading.textContent.trim()
+          });
+        }
+      });
+      return pages;
+    }
+
+    /* ================================================================ */
+    /*  Build the two-column wrapper HTML                               */
+    /* ================================================================ */
+    function buildSuggestionsColumn(algoliaSuggestions, shopifySuggestions, shopifyPages) {
+      var html = '<div class="algolia-ps-col algolia-ps-col--suggestions">';
+
+      /* --- Algolia Suggestions Section --- */
+      html += '<h3 class="algolia-ps-header">';
+      html += '<span>SUGGESTIONS</span>';
+      html += '<span class="algolia-ps-badge algolia-ps-badge--algolia" title="Powered by Algolia">';
+      html += '<span class="algolia-ps-badge__icon">' + ALGOLIA_LOGO_SVG + '</span>';
+      html += '<span>Algolia</span>';
+      html += '</span>';
+      html += '</h3>';
+
+      if (algoliaSuggestions.length === 0) {
+        html += '<div class="algolia-ps-empty">No suggestions found</div>';
+      } else {
+        html += '<ul class="algolia-ps-suggestions-list" role="listbox" aria-label="Search suggestions from Algolia">';
+        algoliaSuggestions.forEach(function (hit, index) {
+          var text = getHighlightedText(hit);
+          var rawText = escapeHtml(hit.query || hit.objectID || '');
+          html += '<li role="option" aria-selected="false">';
+          html += '<button class="algolia-ps-suggestion" type="button" '
+            + 'data-suggestion-text="' + rawText + '" '
+            + 'data-suggestion-index="' + index + '" '
+            + 'aria-label="Search for ' + rawText + '">';
+          html += SEARCH_ICON_SVG;
+          html += '<span class="algolia-ps-suggestion__text">' + text + '</span>';
+          html += '</button></li>';
+        });
+        html += '</ul>';
+      }
+
+      /* --- Shopify Pages Section (if any) --- */
+      if (shopifyPages.length > 0) {
+        html += '<h3 class="algolia-ps-header" style="margin-top:0.4rem;">';
+        html += '<span>PAGES</span>';
+        html += '</h3>';
+        html += '<ul class="algolia-ps-suggestions-list" role="list" aria-label="Page results">';
+        shopifyPages.forEach(function (page) {
+          html += '<li>';
+          html += '<a href="' + escapeHtml(page.url) + '" class="algolia-ps-suggestion" tabindex="0">';
+          html += SEARCH_ICON_SVG;
+          html += '<span class="algolia-ps-suggestion__text">' + escapeHtml(page.title) + '</span>';
+          html += '</a></li>';
+        });
+        html += '</ul>';
+      }
+
+      /* Powered-by Algolia footer link */
+      html += '<a class="algolia-ps-powered-by" href="https://www.algolia.com" target="_blank" rel="noopener noreferrer" aria-label="Search by Algolia">';
+      html += ALGOLIA_LOGO_SVG;
+      html += '<span>Search by Algolia</span>';
+      html += '</a>';
+
+      html += '</div>';
+      return html;
+    }
+
+    function buildProductsColumn(products) {
+      var html = '<div class="algolia-ps-col algolia-ps-col--products">';
+      html += '<h3 class="algolia-ps-header">';
+      html += '<span>PRODUCTS</span>';
+      html += '<span class="algolia-ps-badge algolia-ps-badge--shopify" title="From Shopify">';
+      html += '<span class="algolia-ps-badge__icon">' + SHOPIFY_LOGO_SVG + '</span>';
+      html += '<span>Shopify</span>';
+      html += '</span>';
+      html += '</h3>';
+
+      if (products.length === 0) {
+        html += '<div class="algolia-ps-empty">No products found</div>';
+      } else {
+        html += '<ul class="algolia-ps-products-list" role="list" aria-label="Product results">';
+        products.forEach(function (product) {
+          html += '<li>';
+          html += '<a href="' + escapeHtml(product.url) + '" class="algolia-ps-product" tabindex="0">';
+          if (product.imageUrl) {
+            html += '<img class="algolia-ps-product__image" src="' + escapeHtml(product.imageUrl) + '" '
+              + 'alt="' + escapeHtml(product.imageAlt) + '" width="50" height="50" loading="lazy">';
+          } else {
+            html += '<div class="algolia-ps-product__image" style="background:#f5f5f5;"></div>';
+          }
+          html += '<p class="algolia-ps-product__title">' + escapeHtml(product.title) + '</p>';
+          html += '</a></li>';
+        });
+        html += '</ul>';
+      }
+
+      html += '</div>';
+      return html;
+    }
+
+    /* ================================================================ */
+    /*  Cache for last Algolia suggestions per psElement                */
+    /* ================================================================ */
+    var cachedAlgoliaSuggestions = {};
+    var elementIdCounter = 0;
+
+    function getElementId(psElement) {
+      if (!psElement._algoliaId) {
+        psElement._algoliaId = 'aps_' + (++elementIdCounter);
+      }
+      return psElement._algoliaId;
+    }
+
+    /* ================================================================ */
+    /*  Inject the two-column overlay into Dawn's results container    */
+    /*  This is called AFTER Dawn has finished its innerHTML render.   */
+    /*  Strategy: We monkey-patch the renderSearchResults method on    */
+    /*  the PredictiveSearch custom element to inject our overlay      */
+    /*  after Dawn completes its render cycle.                         */
+    /* ================================================================ */
+    function injectOverlay(psElement) {
+      var elId = getElementId(psElement);
+      var suggestions = cachedAlgoliaSuggestions[elId] || [];
+
+      var resultsContainer = psElement.querySelector('[data-predictive-search]');
+      if (!resultsContainer) {
+        console.warn('[Algolia PS] No [data-predictive-search] container found.');
+        return;
+      }
+
+      /* Check if Dawn has rendered results (look for the results div) */
+      var predictiveResults = resultsContainer.querySelector('#predictive-search-results');
+      if (!predictiveResults) {
+        console.log('[Algolia PS] Dawn results not rendered yet, skipping overlay.');
+        return;
+      }
+
+      /* Scrape Shopify data from Dawn's rendered DOM BEFORE we hide it */
+      var shopifyProducts = scrapeShopifyProducts(psElement);
+      var shopifyPages = scrapeShopifyPages(psElement);
+
+      console.log('[Algolia PS] Injecting overlay — Algolia suggestions:', suggestions.length,
+        ', Shopify products:', shopifyProducts.length, ', Pages:', shopifyPages.length);
+
+      /* Hide Dawn's native result groups (keep in DOM for scraping on next cycle) */
+      var nativeGroups = resultsContainer.querySelector('#predictive-search-results-groups-wrapper');
+      if (nativeGroups) {
+        nativeGroups.style.display = 'none';
+      }
+
+      /* Hide Dawn's "Search for..." button */
+      var searchForBtn = resultsContainer.querySelector('#predictive-search-option-search-keywords');
+      if (searchForBtn) {
+        searchForBtn.style.display = 'none';
+      }
+
+      /* Hide Dawn's loading spinner */
+      var spinner = resultsContainer.querySelector('.predictive-search__loading-state');
+      if (spinner) {
+        spinner.style.display = 'none';
+      }
+
+      /* Remove any existing wrapper (Dawn's innerHTML wipes it, but just in case) */
+      var existingWrapper = predictiveResults.querySelector('.' + WRAPPER_CLASS);
+      if (existingWrapper) {
+        existingWrapper.remove();
+      }
+
+      /* Create new wrapper */
+      var wrapper = document.createElement('div');
+      wrapper.className = WRAPPER_CLASS;
+      wrapper.setAttribute('role', 'region');
+      wrapper.setAttribute('aria-label', 'Search results');
+      wrapper.innerHTML = buildSuggestionsColumn(suggestions, [], shopifyPages) + buildProductsColumn(shopifyProducts);
+
+      /* Insert at the very top of #predictive-search-results */
+      predictiveResults.insertBefore(wrapper, predictiveResults.firstChild);
+
+      /* Bind click handlers on suggestion buttons */
+      bindSuggestionClicks(psElement, wrapper);
+
+      console.log('[Algolia PS] Overlay injected successfully.');
+    }
+
+    /* ================================================================ */
+    /*  Handle suggestion click: fill input + submit form              */
+    /* ================================================================ */
+    function bindSuggestionClicks(psElement, wrapper) {
+      var buttons = wrapper.querySelectorAll('.algolia-ps-suggestion');
+      buttons.forEach(function (btn) {
+        btn.addEventListener('click', function (e) {
+          e.preventDefault();
+          e.stopPropagation();
+
+          var suggestionText = btn.getAttribute('data-suggestion-text');
+          if (!suggestionText) return;
+
+          var input = psElement.querySelector('input[type="search"]');
+          if (!input) return;
+
+          input.value = suggestionText;
+          input.dispatchEvent(new Event('input', { bubbles: true }));
+
+          var form = input.closest('form');
+          if (form) {
+            setTimeout(function () {
+              form.submit();
+            }, 120);
+          }
+        });
+      });
+    }
+
+    /* ================================================================ */
+    /*  Monkey-patch Dawn's PredictiveSearch.renderSearchResults        */
+    /*  This is the KEY fix: we hook AFTER Dawn finishes its innerHTML */
+    /*  replacement, guaranteeing our overlay is always the last thing */
+    /*  inserted into the DOM.                                         */
+    /* ================================================================ */
+    function monkeyPatchRenderMethod(psElement) {
+      /* Dawn's PredictiveSearch class sets innerHTML in renderSearchResults */
+      var originalRender = psElement.renderSearchResults;
+      if (!originalRender || psElement._algoliaPatched) return;
+
+      psElement._algoliaPatched = true;
+
+      psElement.renderSearchResults = function (resultsMarkup) {
+        /* Call Dawn's original render first — this sets innerHTML */
+        originalRender.call(this, resultsMarkup);
+
+        /* Now inject our overlay on top of Dawn's freshly rendered results */
+        /* Use requestAnimationFrame to ensure the DOM has settled */
+        var self = this;
+        requestAnimationFrame(function () {
+          injectOverlay(self);
+        });
+      };
+
+      console.log('[Algolia PS] Successfully patched renderSearchResults on', psElement.tagName);
+    }
+
+    /* ================================================================ */
+    /*  Attach to a <predictive-search> element                        */
+    /* ================================================================ */
+    function attachToPredictiveSearch(psElement) {
+      if (!psElement || psElement.getAttribute(GUARD_ATTR) === 'true') return;
+      psElement.setAttribute(GUARD_ATTR, 'true');
+
+      var input = psElement.querySelector('input[type="search"]');
+      if (!input) {
+        console.warn('[Algolia PS] No search input found in predictive-search element.');
+        psElement.removeAttribute(GUARD_ATTR);
+        return;
+      }
+
+      console.log('[Algolia PS] Attaching to <predictive-search> element.');
+
+      var elId = getElementId(psElement);
+
+      /* Monkey-patch Dawn's render method */
+      monkeyPatchRenderMethod(psElement);
+
+      /* Debounced handler: fetch Algolia suggestions and cache them */
+      var handleInput = debounce(function () {
+        var query = input.value.trim();
+
+        if (query.length < CONFIG.minQueryLength) {
+          cachedAlgoliaSuggestions[elId] = [];
+          return;
+        }
+
+        fetchSuggestions(query, function (suggestions) {
+          /* Only cache if the query hasn't changed while we were fetching */
+          if (input.value.trim() !== query) return;
+          cachedAlgoliaSuggestions[elId] = suggestions;
+
+          /* If Dawn has already rendered results, inject overlay now */
+          var resultsContainer = psElement.querySelector('[data-predictive-search]');
+          if (resultsContainer && resultsContainer.querySelector('#predictive-search-results')) {
+            injectOverlay(psElement);
+          }
+        });
+      }, CONFIG.debounceMs);
+
+      /* Listen for input events */
+      input.addEventListener('input', handleInput);
+
+      /* Also observe for Dawn's results container mutations as a fallback */
+      /* This catches cases where Dawn renders from cache (no fetch needed) */
+      var resultsContainer = psElement.querySelector('[data-predictive-search]');
+      if (resultsContainer) {
+        var resultsObserver = new MutationObserver(function (mutations) {
+          /* Check if Dawn just did an innerHTML replacement */
+          var hasNewContent = false;
+          for (var i = 0; i < mutations.length; i++) {
+            if (mutations[i].addedNodes.length > 0) {
+              hasNewContent = true;
+              break;
+            }
+          }
+
+          if (!hasNewContent) return;
+
+          var query = input.value.trim();
+          if (query.length < CONFIG.minQueryLength) return;
+
+          /* Check if our wrapper is missing (Dawn wiped it with innerHTML) */
+          var wrapper = resultsContainer.querySelector('.' + WRAPPER_CLASS);
+          if (!wrapper && cachedAlgoliaSuggestions[elId] && cachedAlgoliaSuggestions[elId].length >= 0) {
+            /* Re-inject overlay after a microtask to let Dawn finish */
+            Promise.resolve().then(function () {
+              injectOverlay(psElement);
+            });
+          }
+        });
+
+        resultsObserver.observe(resultsContainer, {
+          childList: true,
+          subtree: false
+        });
+      }
+
+      /* Detect when the search closes (Dawn removes 'open' attribute) */
+      var closeObserver = new MutationObserver(function (mutations) {
+        mutations.forEach(function (mutation) {
+          if (mutation.type === 'attributes' && mutation.attributeName === 'open') {
+            if (!psElement.hasAttribute('open')) {
+              cachedAlgoliaSuggestions[elId] = [];
+            }
+          }
+        });
+      });
+
+      closeObserver.observe(psElement, {
+        attributes: true,
+        attributeFilter: ['open']
+      });
+    }
+
+    /* ================================================================ */
+    /*  Wait for Algolia CDN to load (polling with timeout)            */
+    /* ================================================================ */
+    function waitForAlgolia(callback, maxWaitMs) {
+      var elapsed = 0;
+      var interval = 200;
+
+      var check = setInterval(function () {
+        elapsed += interval;
+        if (typeof algoliasearch !== 'undefined') {
+          clearInterval(check);
+          console.log('[Algolia PS] Algolia CDN loaded after', elapsed, 'ms.');
+          callback();
+        } else if (elapsed >= maxWaitMs) {
+          clearInterval(check);
+          console.error('[Algolia PS] Algolia CDN did not load within ' + maxWaitMs + 'ms. Suggestions disabled.');
+        }
+      }, interval);
+    }
+
+    /* ================================================================ */
+    /*  Scan DOM for <predictive-search> elements and attach           */
+    /* ================================================================ */
+    function scanAndAttach() {
+      var elements = document.querySelectorAll('predictive-search');
+      console.log('[Algolia PS] Found', elements.length, '<predictive-search> elements.');
+      elements.forEach(function (el) {
+        attachToPredictiveSearch(el);
+      });
+    }
+
+    /* ================================================================ */
+    /*  MutationObserver on <body> for lazy-loaded search modals       */
+    /* ================================================================ */
+    function startBodyObserver() {
+      var bodyObserver = new MutationObserver(function (mutations) {
+        var shouldScan = false;
+        for (var i = 0; i < mutations.length; i++) {
+          var addedNodes = mutations[i].addedNodes;
+          for (var j = 0; j < addedNodes.length; j++) {
+            var node = addedNodes[j];
+            if (node.nodeType === 1) {
+              if (node.tagName === 'PREDICTIVE-SEARCH' ||
+                  (node.querySelector && node.querySelector('predictive-search'))) {
+                shouldScan = true;
+                break;
+              }
+            }
+          }
+          if (shouldScan) break;
+        }
+
+        if (shouldScan) {
+          clearTimeout(bodyObserver._scanTimer);
+          bodyObserver._scanTimer = setTimeout(scanAndAttach, 100);
+        }
+      });
+
+      bodyObserver.observe(document.body, {
+        childList: true,
+        subtree: true
+      });
+    }
+
+    /* ================================================================ */
+    /*  Bootstrap                                                       */
+    /* ================================================================ */
+    function init() {
+      console.log('[Algolia PS] Bootstrap starting...');
+      waitForAlgolia(function () {
+        scanAndAttach();
+        startBodyObserver();
+      }, 8000);
+    }
+
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', init);
+    } else {
+      init();
+    }
+  })();
+</script>
