@@ -1,0 +1,51 @@
+name: Sync Main To Production Theme Branch
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  sync-prod:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configure Git
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Fetch All Branches
+        run: |
+          git fetch --all
+
+      - name: Sync main → aloglia-main-myshopify
+        run: |
+          git checkout -B aloglia-main-myshopify origin/aloglia-main-myshopify
+
+          # Preserve Shopify theme settings
+          if [ -f config/settings_data.json ]; then
+            cp config/settings_data.json /tmp/settings_data.json
+          fi
+
+          # Make deployment branch identical to main
+          git reset --hard origin/main
+
+          # Restore theme settings
+          if [ -f /tmp/settings_data.json ]; then
+            cp /tmp/settings_data.json config/settings_data.json
+          fi
+
+          git add config/settings_data.json
+
+          git commit -m "Preserve settings_data.json during deploy" || true
+
+          git push origin aloglia-main-myshopify --force
