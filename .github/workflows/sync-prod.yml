@@ -27,9 +27,9 @@ jobs:
         run: |
           git fetch --all
 
-      - name: Sync main → aloglia-main-myshopify
+      - name: Sync main → algolia-main-myshopify
         run: |
-          git checkout -B aloglia-main-myshopify origin/aloglia-main-myshopify
+          git checkout -B algolia-main-myshopify origin/algolia-main-myshopify
 
           # Preserve Shopify theme settings
           if [ -f config/settings_data.json ]; then
@@ -48,4 +48,4 @@ jobs:
 
           git commit -m "Preserve settings_data.json during deploy" || true
 
-          git push origin aloglia-main-myshopify --force
+          git push origin algolia-main-myshopify --force
